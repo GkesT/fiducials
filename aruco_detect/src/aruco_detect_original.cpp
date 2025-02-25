@@ -73,56 +73,6 @@ using namespace cv;
 
 typedef boost::shared_ptr< fiducial_msgs::FiducialArray const> FiducialArrayConstPtr;
 
-cv::Mat generateMarkerBits(const std::string &filename, int markerSize) {
-    cv::Mat img = cv::imread(filename, cv::IMREAD_GRAYSCALE);
-    if (img.empty()) {
-        throw std::runtime_error("Image could not be read: " + filename);
-    }
-
-    // Convert image to binary
-    cv::Mat img_bin;
-    cv::threshold(img, img_bin, 127, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
-
-    // Resize to the marker dimensions (+2 for borders)
-    int outer_cells = markerSize + 4;
-    cv::Mat img_resized;
-    cv::resize(img_bin, img_resized, cv::Size(outer_cells, outer_cells), 0, 0, cv::INTER_NEAREST);
-
-    // Extract inner marker bits
-    cv::Mat markerBits = cv::Mat::zeros(markerSize, markerSize, CV_8UC1);
-    for (int y = 0; y < markerSize; ++y) {
-        for (int x = 0; x < markerSize; ++x) {
-            markerBits.at<uint8_t>(y, x) = img_resized.at<uint8_t>(y + 2, x + 2) > 127 ? 1 : 0;
-        }
-    }
-
-    return markerBits;
-}
-
-cv::Ptr<cv::aruco::Dictionary> createCustomDictionary(const std::string &directory, int markerSize, int maxCorrectionBits) {
-    cv::Ptr<cv::aruco::Dictionary> dictionary = cv::makePtr<cv::aruco::Dictionary>();
-    dictionary->markerSize = markerSize;
-    dictionary->maxCorrectionBits = maxCorrectionBits;
-
-    // Read all PNG files in the directory
-    std::vector<std::string> imageFiles;
-    cv::glob(directory + "/*.png", imageFiles);
-
-    if (imageFiles.empty()) {
-        throw std::runtime_error("No PNG files found in directory: " + directory);
-    }
-
-    for (const auto &filename : imageFiles) {
-        cv::Mat markerBits = generateMarkerBits(filename, markerSize);
-        cv::Mat markerCompressed = cv::aruco::Dictionary::getByteListFromBits(markerBits);
-        dictionary->bytesList.push_back(markerCompressed);
-    }
-
-    return dictionary;
-}
-
-
-
 class FiducialsNode {
   private:
     ros::Publisher vertices_pub;
@@ -652,27 +602,17 @@ FiducialsNode::FiducialsNode() : nh(), pnh("~"), it(nh)
     haveCamInfo = false;
     enable_detections = true;
 
+    int dicno;
+
     detectorParams = new aruco::DetectorParameters();
 
     pnh.param<bool>("publish_images", publish_images, false);
     pnh.param<double>("fiducial_len", fiducial_len, 0.14);
+    pnh.param<int>("dictionary", dicno, 7);
     pnh.param<bool>("do_pose_estimation", doPoseEstimation, true);
     pnh.param<bool>("publish_fiducial_tf", publishFiducialTf, true);
     pnh.param<bool>("vis_msgs", vis_msgs, false);
     pnh.param<bool>("verbose", verbose, false);
-
-    // Replace predefined dictionary with a custom one
-    std::string customDictionaryDir = "/home/thanasis/submarine_coverage/aruco_mip_36h12_dict";
-    int markerSize = 6; // Adjust based on your markers
-    int maxCorrectionBits = 3;
-    
-    try {
-            dictionary = createCustomDictionary(customDictionaryDir, markerSize, maxCorrectionBits);
-            ROS_INFO("Custom dictionary loaded from: %s", customDictionaryDir.c_str());
-        } catch (const std::exception &e) {
-            ROS_ERROR("Error loading custom dictionary: %s", e.what());
-            throw;
-        }
 
     std::string str;
     std::vector<std::string> strs;
@@ -728,6 +668,7 @@ FiducialsNode::FiducialsNode() : nh(), pnh("~"), it(nh)
     else        
         pose_pub = nh.advertise<fiducial_msgs::FiducialTransformArray>("fiducial_transforms", 1);
 
+    dictionary = aruco::getPredefinedDictionary(dicno);
 
     img_sub = it.subscribe("camera", 1,
                         &FiducialsNode::imageCallback, this);
